@@ -13,7 +13,7 @@ A modern, fast, and lightweight desktop application built with Python and Custom
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/freelance-tracker.git
+   git clone https://github.com/xAndReWxx/freelance-tracker.git
    cd freelance-tracker
    ```
 2. Create a virtual environment and activate it:
@@ -23,7 +23,7 @@ A modern, fast, and lightweight desktop application built with Python and Custom
    ```
 3. Install dependencies:
    ```bash
-   pip install customtkinter pystray win11toast beautifulsoup4 requests winshell pypiwin32 pillow
+   pip install customtkinter pystray win11toast beautifulsoup4 requests winshell pypiwin32 pillow pyinstaller
    ```
 4. Run the application:
    ```bash
@@ -32,7 +32,7 @@ A modern, fast, and lightweight desktop application built with Python and Custom
 
 ## 📦 Download (For Users)
 You don't need Python installed to run this! 
-Just head over to the [Releases](https://github.com/YOUR_USERNAME/freelance-tracker/releases) page and download the latest `.zip` file. Extract it and run `Freelance Tracker.exe`.
+Just head over to the [Releases](https://github.com/xAndReWxx/freelance-tracker/releases) page and download the latest `.zip` file. Extract it and run `Freelance Tracker.exe`.
 
 ## 🤝 Contributing
 Feel free to fork the repository, add new scrapers for other platforms in the `scrapers/` folder, and submit a pull request!
