@@ -1,0 +1,19 @@
+# Python environments
+venv/
+env/
+.venv/
+
+# Build artifacts
+build/
+dist/
+*.spec
+
+# Caches
+__pycache__/
+*.pyc
+.pytest_cache/
+.vscode/
+
+# Application Data
+settings.json
+*.log
