@@ -79,15 +79,19 @@ A lightweight, modern desktop application that silently monitors popular Arabic 
 
 ## 📸 Screenshots
 
-<!-- Replace with actual screenshots after building -->
+<div align="center">
 
-> **Main Window** — Project feed with realtime cards, platform badges, and budget display.
+### Main Window
 
-![Main Window](https://via.placeholder.com/900x500/0a0c18/7c6cf0?text=Main+Window+Screenshot)
+<img src="assets/screenshots/main-window.png" width="95%" />
 
-> **System Tray** — Runs silently in the background with quick-access menu.
+<br><br>
 
-![System Tray](https://via.placeholder.com/400x200/0a0c18/00e5c0?text=Tray+Menu+Screenshot)
+### System Tray
+
+<img src="assets/screenshots/tray-menu.png" width="60%" />
+
+</div>
 
 ---
 
