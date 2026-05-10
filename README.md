@@ -1,6 +1,6 @@
 # Freelance Tracker 🚀
 
-A modern, fast, and lightweight desktop application built with Python and CustomTkinter to silently monitor popular freelance platforms (Mostaql, Nafezly, FreelanceYard, Kafiil) and deliver real-time Windows toast notifications for new projects.
+A modern, fast, and lightweight desktop application built with Python and CustomTkinter to silently monitor popular freelance platforms (Mostaql, Nafezly, FreelanceYard, Kafiil, Khamsat) and deliver real-time Windows toast notifications for new projects.
 
 ## 🌟 Features
 - **Real-Time Monitoring:** Fetches projects within seconds of posting.
