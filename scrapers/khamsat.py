@@ -55,6 +55,9 @@ class KhamsatScraper(BaseScraper):
         self._seen_ids = set()
         # Cache: maps request_id → canonical URL from HEAD redirect
         self._validated_urls = {}
+        # Reusable import for URL path validation
+        from urllib.parse import urlparse
+        self._urlparse = urlparse
 
     # ------------------------------------------------------------------
     # Public helpers called by the main-window worker
@@ -188,9 +191,17 @@ class KhamsatScraper(BaseScraper):
                     url, headers=HEADERS, timeout=_HEAD_TIMEOUT,
                     allow_redirects=True
                 )
-                # PRIMARY validation: redirect to canonical slug URL
-                has_slug = f"/{req_id}-" in resp.url
-                is_valid = has_slug and resp.status_code == 200
+                # STRICT validation: parse the final URL path and ensure
+                # it belongs to /community/requests/ specifically.
+                # Khamsat shares a global ID counter across all community
+                # sections (requests, showcase, discussions), so we MUST
+                # reject any redirect that lands outside /community/requests/.
+                path = self._urlparse(resp.url).path
+                is_valid = (
+                    resp.status_code == 200
+                    and f"/{req_id}-" in path
+                    and path.startswith("/community/requests/")
+                )
 
                 return req_id, is_valid, resp.url if is_valid else url
 
