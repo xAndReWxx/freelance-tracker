@@ -6,7 +6,6 @@ env/
 # Build artifacts
 build/
 dist/
-*.spec
 
 # Caches
 __pycache__/

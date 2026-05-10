@@ -662,6 +662,83 @@ class FreelanceTrackerApp(ctk.CTk):
         finally:
             session.close()
 
+    def _khamsat_worker(self, config):
+        """
+        Specialized worker for Khamsat ID-based crawling.
+        Unlike other scrapers that scrape listing pages, Khamsat uses
+        incremental request IDs and scans forward from the last known ID.
+        """
+        from scrapers.khamsat import KhamsatScraper
+
+        session = requests.Session()
+        session.headers.update(HEADERS)
+        interval = config.get("interval", 20)
+
+        scraper = KhamsatScraper()
+        scraper.set_last_id(self.settings.last_khamsat_id)
+
+        self.after(0, lambda: self._update_log(
+            f"[Khamsat] Starting ID scan from #{self.settings.last_khamsat_id}"
+        ))
+
+        try:
+            while self.is_monitoring:
+                try:
+                    projects = scraper.scrape(session)
+                    current_id = scraper.get_last_id()
+
+                    # Persist the high-water mark
+                    if current_id > self.settings.last_khamsat_id:
+                        self.settings.last_khamsat_id = current_id
+                        self.settings.save()
+
+                    found = len(projects)
+                    self.after(0, lambda f=found, cid=current_id: self._update_log(
+                        f"Checked Khamsat ✓ (ID→{cid}, found {f})"
+                    ))
+
+                    for project in projects:
+                        unique_id = project.link
+                        if not unique_id:
+                            continue
+
+                        is_new = False
+                        with self.seen_lock:
+                            if unique_id not in self.seen_projects:
+                                self.seen_projects[unique_id] = True
+                                is_new = True
+
+                                if len(self.seen_projects) > 3000:
+                                    first_key = next(iter(self.seen_projects))
+                                    del self.seen_projects[first_key]
+
+                        if is_new:
+                            project.detected_at = datetime.now()
+
+                            if self.settings.matches_filters(project):
+                                def _on_new_project(p=project):
+                                    self.session_new += 1
+                                    self._add_project_card(p)
+                                self.after(0, _on_new_project)
+                                self.notif_mgr.send(project)
+                                self.after(0, lambda p=project: self._update_log(
+                                    f"🆕 Khamsat: {p.title[:50]}"
+                                ))
+                            else:
+                                self.after(0, lambda p=project: self._update_log(
+                                    f"Filtered out: {p.title[:40]}"
+                                ))
+
+                except Exception as e:
+                    self.after(0, lambda err=e: self._update_log(f"Khamsat error: {err}"))
+
+                for _ in range(interval):
+                    if not self.is_monitoring:
+                        break
+                    time.sleep(1)
+        finally:
+            session.close()
+
     def _toggle_monitoring(self):
         if not self.is_monitoring:
             any_selected = any(var.get() for var in self.platform_vars.values())
@@ -683,7 +760,15 @@ class FreelanceTrackerApp(ctk.CTk):
 
             for site, config in PLATFORMS_CONFIG.items():
                 if self.platform_vars[site].get():
-                    t = threading.Thread(target=self._platform_worker, args=(site, config), daemon=True)
+                    if site == "Khamsat":
+                        # Khamsat uses a dedicated ID-based worker
+                        t = threading.Thread(
+                            target=self._khamsat_worker, args=(config,), daemon=True
+                        )
+                    else:
+                        t = threading.Thread(
+                            target=self._platform_worker, args=(site, config), daemon=True
+                        )
                     self.workers.append(t)
                     t.start()
 

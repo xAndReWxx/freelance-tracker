@@ -41,6 +41,7 @@ MOSTAQL_ICON = get_asset_path("assets/icons/mostaql.ico")
 NAFEZLY_ICON = get_asset_path("assets/icons/nafezly.ico")
 FREELANCEYARD_ICON = get_asset_path("assets/icons/freelanceyard.ico")
 KAFIIL_ICON = get_asset_path("assets/icons/kafiil.ico")
+KHAMSAT_ICON = get_asset_path("assets/icons/khamsat.ico")
 APP_ICON = get_asset_path("assets/icons/FWT.ico")
 
 # ==========================================
@@ -96,8 +97,8 @@ PLATFORMS_CONFIG = {
         "interval": 20
     },
     "FreelanceYard": {
-        "color": "#f39c12",
-        "hover": "#d35400",
+        "color": "#e74c3c",
+        "hover": "#c0392b",
         "icon": FREELANCEYARD_ICON,
         "default": True,
         "interval": 30
@@ -108,6 +109,13 @@ PLATFORMS_CONFIG = {
         "icon": KAFIIL_ICON,
         "default": True,
         "interval": 25
+    },
+    "Khamsat": {
+        "color": "#f39c12",
+        "hover": "#d35400",
+        "icon": KHAMSAT_ICON,
+        "default": True,
+        "interval": 20
     }
 }
 

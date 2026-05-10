@@ -18,6 +18,7 @@ class SettingsManager:
         self.autostart_enabled = False
         self.device_registered = False
         self.device_id = ""
+        self.last_khamsat_id = 0
         self._lock = threading.Lock()
 
     def load(self):
@@ -41,6 +42,7 @@ class SettingsManager:
                     self.autostart_enabled = data.get("autostart_enabled", False)
                     self.device_registered = data.get("device_registered", False)
                     self.device_id = data.get("device_id", "")
+                    self.last_khamsat_id = data.get("last_khamsat_id", 0)
         except Exception as e:
             print("Load settings error:", e)
 
@@ -56,7 +58,8 @@ class SettingsManager:
                         "notifications_enabled": self.notifications_enabled,
                         "autostart_enabled": self.autostart_enabled,
                         "device_registered": self.device_registered,
-                        "device_id": self.device_id
+                        "device_id": self.device_id,
+                        "last_khamsat_id": self.last_khamsat_id
                     }, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print("Save settings error:", e)
