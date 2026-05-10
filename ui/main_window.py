@@ -823,6 +823,12 @@ class FreelanceTrackerApp(ctk.CTk):
     def _on_close(self):
         self.is_monitoring = False
         self.tray_mgr.stop()
+        # Shutdown persistent Playwright browser
+        try:
+            from scrapers.browser_manager import browser_mgr
+            browser_mgr.shutdown()
+        except Exception:
+            pass
         self.after(350, self.destroy)
 
     def _start_from_tray(self):

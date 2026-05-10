@@ -196,39 +196,74 @@ class KhamsatScraper(BaseScraper):
         return projects
 
     def fetch_full_description(self, project, session):
-        """Fetch the full request description from the individual page."""
+        """
+        Hybrid description extraction — two-layer approach.
+
+        Layer 1: requests GET (fast, lightweight).
+                 Works when WAF is not blocking (status 200).
+
+        Layer 2: Playwright fallback (headless Chromium).
+                 Triggered when Layer 1 returns status 202 (WAF)
+                 or fails to extract a description.
+        """
         desc, budget = project.description, project.budget
+        if not project.link:
+            return desc, budget
+
+        # ── Layer 1: requests (fast path) ────────────────────────────
+        waf_blocked = False
         try:
-            if not project.link:
-                return desc, budget
-            
             response = session.get(project.link, headers=HEADERS, timeout=15)
             if response.status_code == 200:
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(response.text, "html.parser")
-                
-                # The first forum_post is the original request. We want its content.
-                # Common Khamsat content containers:
-                desc_el = soup.select_one("div.card-body article.replace_urls")
-                if not desc_el:
-                    desc_el = soup.select_one("article .post-content, div.post-content, div.ajax_post .text_wrapper, .forum_post .content")
-                
-                if desc_el:
-                    # Remove blockquotes or unwanted elements if necessary
-                    for unwanted in desc_el.select("blockquote, .post-signature, script, style, .text-muted"):
-                        unwanted.decompose()
-                        
-                    # Replace br tags with newlines to preserve line breaks
-                    for br in desc_el.find_all("br"):
-                        br.replace_with("\n")
-                        
-                    extracted_text = self.clean_description(desc_el.get_text("\n", strip=True))
-                    if extracted_text and len(extracted_text) > 10:
-                        desc = extracted_text
+                extracted = self._extract_description_from_html(response.text)
+                if extracted and len(extracted) > 10:
+                    return extracted, budget
+            elif response.status_code == 202:
+                waf_blocked = True
         except Exception as e:
-            print(f"Fetch details error (Khamsat): {e}")
-        
+            print(f"[Khamsat] Layer 1 fetch error: {e}")
+
+        # ── Layer 2: Playwright fallback ─────────────────────────────
+        try:
+            from scrapers.browser_manager import browser_mgr
+            html = browser_mgr.fetch_page_html(project.link)
+            if html:
+                extracted = self._extract_description_from_html(html)
+                if extracted and len(extracted) > 10:
+                    desc = extracted
+                    if waf_blocked:
+                        print(f"[Khamsat] Playwright recovered description for {project.link}")
+        except Exception as e:
+            print(f"[Khamsat] Layer 2 Playwright error: {e}")
+
         return desc, budget
+
+    def _extract_description_from_html(self, html: str) -> str | None:
+        """Extract and clean the request description from rendered HTML."""
+        soup = BeautifulSoup(html, "html.parser")
+
+        # Primary selector: the main request body
+        desc_el = soup.select_one("div.card-body article.replace_urls")
+        if not desc_el:
+            desc_el = soup.select_one(
+                "article .post-content, div.post-content, "
+                "div.ajax_post .text_wrapper, .forum_post .content"
+            )
+
+        if not desc_el:
+            return None
+
+        # Remove noise elements
+        for unwanted in desc_el.select(
+            "blockquote, .post-signature, script, style, .text-muted"
+        ):
+            unwanted.decompose()
+
+        # Preserve line breaks
+        for br in desc_el.find_all("br"):
+            br.replace_with("\n")
+
+        return self.clean_description(desc_el.get_text("\n", strip=True))
 
     # ------------------------------------------------------------------
     # First-run seeding (legacy fallback for scrape() when _last_id==0)

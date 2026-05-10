@@ -7,8 +7,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        ('assets', 'assets'),
-        ('settings.json', '.')
+        ('assets', 'assets')
     ],
     hiddenimports=[
         'winshell',
