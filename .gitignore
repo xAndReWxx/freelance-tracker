@@ -6,13 +6,29 @@ env/
 # Build artifacts
 build/
 dist/
+*.spec
 
 # Caches
 __pycache__/
 *.pyc
+*.pyo
 .pytest_cache/
-.vscode/
 
-# Application Data
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Application data (user-generated)
 settings.json
 *.log
+
+# OS files
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Environment
+.env
+.env.local

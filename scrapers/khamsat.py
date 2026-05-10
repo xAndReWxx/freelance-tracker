@@ -71,6 +71,65 @@ class KhamsatScraper(BaseScraper):
         """Return the current high-water mark ID."""
         return self._last_id
 
+    def load_seen_cache(self, seen_ids: list):
+        """Restore persisted seen-ID cache to prevent re-detection across restarts."""
+        self._seen_ids = set(seen_ids)
+
+    def get_seen_cache(self) -> list:
+        """Export recent seen IDs for persistence (capped at 200, newest kept)."""
+        return sorted(self._seen_ids)[-200:]
+
+    # ------------------------------------------------------------------
+    # Startup baseline — discover frontier without returning projects
+    # ------------------------------------------------------------------
+
+    def establish_baseline(self, session) -> int:
+        """
+        Scan forward from the current high-water mark to find the true
+        frontier (latest valid request ID) WITHOUT returning any projects.
+
+        Strategy:
+        1. Fetch listing page to bulk-discover current highest ID (1 GET).
+        2. Probe forward from that point in batches until hitting
+           _MAX_CONSECUTIVE_INVALID consecutive invalid IDs.
+        3. Update _last_id and _seen_ids silently.
+
+        Returns the frontier ID.  No projects, no UI, no notifications.
+        """
+        # ── Step 1: Listing page — jump to the current neighbourhood ──
+        listing_data = self._fetch_listing(session)
+        if listing_data:
+            listing_max = max(listing_data.keys())
+            if listing_max > self._last_id:
+                self._last_id = listing_max
+            self._seen_ids.update(listing_data.keys())
+            print(f"[Khamsat] Listing baseline: #{listing_max} "
+                  f"({len(listing_data)} existing requests)")
+
+        if self._last_id == 0:
+            print("[Khamsat] Baseline failed — no IDs discovered")
+            return 0
+
+        # ── Step 2: Forward probing — find the true frontier ──────────
+        # Probe in batches until no valid IDs are found (frontier hit).
+        # Safety cap: max 10 batches (200 IDs) to prevent runaway scanning.
+        max_batches = 10
+        for _ in range(max_batches):
+            start_id = self._last_id + 1
+            end_id = start_id + _SCAN_RANGE
+            validated = self._probe_ids(session, start_id, end_id)
+
+            if not validated:
+                # No valid IDs in this batch — frontier reached
+                break
+
+            frontier = max(validated)
+            self._last_id = frontier
+            self._seen_ids.update(validated)
+
+        print(f"[Khamsat] Baseline established at #{self._last_id}")
+        return self._last_id
+
     # ------------------------------------------------------------------
     # Core scraping — two-phase pipeline
     # ------------------------------------------------------------------
@@ -123,9 +182,9 @@ class KhamsatScraper(BaseScraper):
                     self._last_id = req_id
 
         # Cap seen-IDs to prevent unbounded growth
-        if len(self._seen_ids) > 2000:
+        if len(self._seen_ids) > 500:
             sorted_ids = sorted(self._seen_ids)
-            self._seen_ids = set(sorted_ids[-1000:])
+            self._seen_ids = set(sorted_ids[-300:])
 
         return projects
 
@@ -138,7 +197,7 @@ class KhamsatScraper(BaseScraper):
         return project.description, project.budget
 
     # ------------------------------------------------------------------
-    # First-run seeding
+    # First-run seeding (legacy fallback for scrape() when _last_id==0)
     # ------------------------------------------------------------------
 
     def _seed_from_listing(self, session) -> list:

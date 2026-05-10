@@ -11,6 +11,8 @@ from config import get_settings_path
 class SettingsManager:
     """Manages application settings with thread-safe access."""
 
+    _SEEN_CACHE_MAX = 200  # Max recent Khamsat IDs to persist
+
     def __init__(self):
         self.keywords = []
         self.filters_enabled = False
@@ -19,6 +21,7 @@ class SettingsManager:
         self.device_registered = False
         self.device_id = ""
         self.last_khamsat_id = 0
+        self.khamsat_recent_seen = []
         self._lock = threading.Lock()
 
     def load(self):
@@ -43,6 +46,7 @@ class SettingsManager:
                     self.device_registered = data.get("device_registered", False)
                     self.device_id = data.get("device_id", "")
                     self.last_khamsat_id = data.get("last_khamsat_id", 0)
+                    self.khamsat_recent_seen = data.get("khamsat_recent_seen", [])
         except Exception as e:
             print("Load settings error:", e)
 
@@ -51,6 +55,8 @@ class SettingsManager:
         try:
             with self._lock:
                 path = get_settings_path("settings.json")
+                # Cap the seen cache before saving
+                seen_capped = self.khamsat_recent_seen[-self._SEEN_CACHE_MAX:]
                 with open(path, "w", encoding="utf-8") as f:
                     json.dump({
                         "keywords": self.keywords,
@@ -59,7 +65,8 @@ class SettingsManager:
                         "autostart_enabled": self.autostart_enabled,
                         "device_registered": self.device_registered,
                         "device_id": self.device_id,
-                        "last_khamsat_id": self.last_khamsat_id
+                        "last_khamsat_id": self.last_khamsat_id,
+                        "khamsat_recent_seen": seen_capped
                     }, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print("Save settings error:", e)

@@ -665,8 +665,16 @@ class FreelanceTrackerApp(ctk.CTk):
     def _khamsat_worker(self, config):
         """
         Specialized worker for Khamsat ID-based crawling.
-        Unlike other scrapers that scrape listing pages, Khamsat uses
-        incremental request IDs and scans forward from the last known ID.
+
+        Startup:
+        - Calls establish_baseline() ONCE to discover the true frontier.
+          This scans forward (listing page + HEAD probes) silently —
+          no UI cards, no notifications, no sounds.
+        - Persists the frontier immediately.
+
+        Main loop:
+        - Only IDs beyond the frontier trigger UI/notifications.
+        - High-water mark + seen cache saved on every detection.
         """
         from scrapers.khamsat import KhamsatScraper
 
@@ -677,19 +685,55 @@ class FreelanceTrackerApp(ctk.CTk):
         scraper = KhamsatScraper()
         scraper.set_last_id(self.settings.last_khamsat_id)
 
+        # ── Restore persisted seen-cache ─────────────────────────────
+        if self.settings.khamsat_recent_seen:
+            scraper.load_seen_cache(self.settings.khamsat_recent_seen)
+
         self.after(0, lambda: self._update_log(
-            f"[Khamsat] Starting ID scan from #{self.settings.last_khamsat_id}"
+            f"[Khamsat] Establishing baseline from #{self.settings.last_khamsat_id}..."
         ))
 
+        # ── Silent baseline — find the true frontier ─────────────────
+        # This scans forward (listing page + batched HEAD probes) to
+        # discover the latest valid request ID.  Returns nothing to UI.
+        try:
+            baseline_id = scraper.establish_baseline(session)
+        except Exception as e:
+            baseline_id = scraper.get_last_id()
+            self.after(0, lambda err=e: self._update_log(
+                f"[Khamsat] Baseline error: {err}"
+            ))
+
+        # Persist the baseline immediately
+        if baseline_id > self.settings.last_khamsat_id:
+            self.settings.last_khamsat_id = baseline_id
+        self.settings.khamsat_recent_seen = scraper.get_seen_cache()
+        self.settings.save()
+
+        self.after(0, lambda cid=baseline_id: self._update_log(
+            f"[Khamsat] Baseline at #{cid} — monitoring for new requests"
+        ))
+
+        # ── Main monitoring loop ─────────────────────────────────────
+        # Everything from here is genuinely new (post-baseline).
         try:
             while self.is_monitoring:
+                for _ in range(interval):
+                    if not self.is_monitoring:
+                        break
+                    time.sleep(1)
+
+                if not self.is_monitoring:
+                    break
+
                 try:
                     projects = scraper.scrape(session)
                     current_id = scraper.get_last_id()
 
-                    # Persist the high-water mark
-                    if current_id > self.settings.last_khamsat_id:
+                    # ── Persist state immediately on detection ────────
+                    if current_id > self.settings.last_khamsat_id or projects:
                         self.settings.last_khamsat_id = current_id
+                        self.settings.khamsat_recent_seen = scraper.get_seen_cache()
                         self.settings.save()
 
                     found = len(projects)
@@ -731,11 +775,6 @@ class FreelanceTrackerApp(ctk.CTk):
 
                 except Exception as e:
                     self.after(0, lambda err=e: self._update_log(f"Khamsat error: {err}"))
-
-                for _ in range(interval):
-                    if not self.is_monitoring:
-                        break
-                    time.sleep(1)
         finally:
             session.close()
 

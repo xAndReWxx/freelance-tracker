@@ -26,7 +26,8 @@ class StartupManager:
     def enable(self):
         """Create a startup shortcut."""
         try:
-            import winshell
+            import pythoncom
+            pythoncom.CoInitialize()
             from win32com.client import Dispatch
 
             startup_path = self._get_startup_path()
@@ -37,21 +38,27 @@ class StartupManager:
                 work_dir = os.path.dirname(sys.executable)
                 arguments = ""
             else:
-                target = sys.executable
-                arguments = f'"{os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "app.py"))}"'
-                work_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                target = os.path.abspath(sys.argv[0])
+                arguments = ""
+                work_dir = os.path.dirname(target)
                 icon_path = ""
 
             shell = Dispatch('WScript.Shell')
             shortcut = shell.CreateShortCut(startup_path)
-            shortcut.Targetpath = target
+            shortcut.TargetPath = target
             shortcut.WorkingDirectory = work_dir
             if arguments:
                 shortcut.Arguments = arguments
             if icon_path:
                 shortcut.IconLocation = icon_path
-            shortcut.save()
-            return True
+            shortcut.Save()
+
+            if os.path.exists(startup_path):
+                print(f"Startup shortcut created: {startup_path}")
+                return True
+            else:
+                print(f"Startup shortcut NOT found after save: {startup_path}")
+                return False
         except Exception as e:
             print(f"Startup enable error: {e}")
             return False

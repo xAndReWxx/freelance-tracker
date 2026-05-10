@@ -13,6 +13,8 @@ a = Analysis(
     hiddenimports=[
         'winshell',
         'win32com.client',
+        'pythoncom',
+        'pywintypes',
         'pystray._win32',
         'win11toast',
         'customtkinter',
