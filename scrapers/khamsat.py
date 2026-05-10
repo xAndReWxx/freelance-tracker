@@ -3,7 +3,7 @@ Khamsat community requests scraper.
 
 Detection strategy
 ------------------
-1. Concurrent HEAD requests on the next 20 IDs from the high-water mark.
+1. Sequential HEAD requests on the next IDs from the high-water mark.
    Valid requests redirect (301) to a canonical slug URL:
        /community/requests/788217-مطلوب-مصمم
    Invalid requests stay at the bare URL and return 404.
@@ -11,12 +11,16 @@ Detection strategy
 2. A single GET to the listing page fetches data for ALL validated IDs
    in one request (individual pages are behind AWS WAF).
 
-3. Adaptive stop: 5 consecutive invalid IDs → stop current scan cycle.
+3. Adaptive stop: 25 consecutive invalid IDs → stop current scan cycle.
+   Counter resets to 0 whenever a valid ID is found, bridging gaps safely.
 
-This two-phase approach (HEAD probe → listing parse) minimises bandwidth,
-CPU, and HTML parsing while maintaining accurate detection.
+4. Human-like pacing: randomized delays between each HEAD request.
+   Automatically throttles to slower delays when many misses are detected,
+   making the crawler appear natural and avoid anti-bot detection.
 """
 import re
+import time
+import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
 from scrapers.base import BaseScraper
@@ -27,11 +31,14 @@ _LISTING_URL = "https://khamsat.com/community/requests"
 _BASE_URL = "https://khamsat.com"
 
 # ── Tuning constants ──────────────────────────────────────────────────
-_SCAN_RANGE = 20          # Number of future IDs to probe each cycle
-_MAX_WORKERS = 5          # Concurrent HEAD threads
-_MAX_CONSECUTIVE_INVALID = 5  # Adaptive stop threshold
-_HEAD_TIMEOUT = 8         # Seconds per HEAD probe
-_GET_TIMEOUT = 15         # Seconds for the listing page GET
+_SCAN_RANGE = 40               # Max IDs to probe per cycle (adaptive stop applies)
+_MAX_CONSECUTIVE_INVALID = 25  # Stop only after 25 consecutive misses
+_HEAD_TIMEOUT = 8              # Seconds per HEAD probe
+_GET_TIMEOUT  = 15             # Seconds for the listing page GET
+# Human-like pacing — randomized to avoid fingerprinting
+_DELAY_NORMAL   = (0.8, 2.0)   # Delay range between requests (normal)
+_DELAY_THROTTLE = (2.0, 4.0)   # Delay range when many consecutive misses
+_THROTTLE_MISS_THRESHOLD = 10  # After this many misses, switch to slow lane
 
 
 class KhamsatScraper(BaseScraper):
@@ -189,12 +196,39 @@ class KhamsatScraper(BaseScraper):
         return projects
 
     def fetch_full_description(self, project, session):
-        """
-        Descriptions are extracted during scrape() from the listing page.
-        Individual request pages are behind AWS WAF, so no additional
-        HTTP request is needed or attempted.
-        """
-        return project.description, project.budget
+        """Fetch the full request description from the individual page."""
+        desc, budget = project.description, project.budget
+        try:
+            if not project.link:
+                return desc, budget
+            
+            response = session.get(project.link, headers=HEADERS, timeout=15)
+            if response.status_code == 200:
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(response.text, "html.parser")
+                
+                # The first forum_post is the original request. We want its content.
+                # Common Khamsat content containers:
+                desc_el = soup.select_one("div.card-body article.replace_urls")
+                if not desc_el:
+                    desc_el = soup.select_one("article .post-content, div.post-content, div.ajax_post .text_wrapper, .forum_post .content")
+                
+                if desc_el:
+                    # Remove blockquotes or unwanted elements if necessary
+                    for unwanted in desc_el.select("blockquote, .post-signature, script, style, .text-muted"):
+                        unwanted.decompose()
+                        
+                    # Replace br tags with newlines to preserve line breaks
+                    for br in desc_el.find_all("br"):
+                        br.replace_with("\n")
+                        
+                    extracted_text = self.clean_description(desc_el.get_text("\n", strip=True))
+                    if extracted_text and len(extracted_text) > 10:
+                        desc = extracted_text
+        except Exception as e:
+            print(f"Fetch details error (Khamsat): {e}")
+        
+        return desc, budget
 
     # ------------------------------------------------------------------
     # First-run seeding (legacy fallback for scrape() when _last_id==0)
@@ -228,69 +262,59 @@ class KhamsatScraper(BaseScraper):
 
     def _probe_ids(self, session, start_id: int, end_id: int) -> list:
         """
-        Send concurrent HEAD requests to detect which IDs are valid.
+        Sequential adaptive HEAD crawler.
 
-        A request is VALID if the server redirects (301) to a canonical
-        slug URL containing '/{id}-'.  Invalid requests stay at the bare
-        URL (typically 404, no redirect).
+        Probes IDs one at a time with human-like randomized delays.
+        Automatically throttles when many consecutive misses are detected,
+        making the crawler look natural and avoid anti-bot / rate-limit triggers.
 
-        Applies adaptive stop: if _MAX_CONSECUTIVE_INVALID IDs in a row
-        are invalid, stop probing further.
+        Stops only after _MAX_CONSECUTIVE_INVALID (25) consecutive misses.
+        Resets counter immediately when a valid ID is found (gap recovery).
 
         Returns sorted list of validated request IDs.
         """
-        ids_to_check = list(range(start_id, end_id))
-        results = {}  # {req_id: (is_valid, canonical_url)}
+        validated = []
+        consecutive_invalid = 0
 
-        def _head_check(req_id):
-            """Probe a single ID via HEAD with redirect following."""
+        for req_id in range(start_id, end_id):
             url = f"{_BASE_URL}/community/requests/{req_id}"
+            is_valid = False
+            canonical = url
+
             try:
                 resp = session.head(
                     url, headers=HEADERS, timeout=_HEAD_TIMEOUT,
                     allow_redirects=True
                 )
-                # STRICT validation: parse the final URL path and ensure
-                # it belongs to /community/requests/ specifically.
-                # Khamsat shares a global ID counter across all community
-                # sections (requests, showcase, discussions), so we MUST
-                # reject any redirect that lands outside /community/requests/.
-                path = self._urlparse(resp.url).path
+                final_url = resp.url
+                path = self._urlparse(final_url).path
                 is_valid = (
                     resp.status_code == 200
                     and f"/{req_id}-" in path
                     and path.startswith("/community/requests/")
+                    and "/community/showcase/" not in final_url
                 )
-
-                return req_id, is_valid, resp.url if is_valid else url
-
+                if is_valid:
+                    canonical = final_url
             except Exception:
-                # Network error, timeout, SSL — treat as unknown, skip
-                return req_id, False, url
+                pass  # Timeout / network error — treated as miss
 
-        with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
-            futures = {pool.submit(_head_check, rid): rid for rid in ids_to_check}
-            for future in as_completed(futures):
-                try:
-                    req_id, is_valid, canonical = future.result()
-                    results[req_id] = (is_valid, canonical)
-                    if is_valid:
-                        self._validated_urls[req_id] = canonical
-                except Exception:
-                    pass
-
-        # Walk IDs in order, applying adaptive stop
-        consecutive_invalid = 0
-        validated = []
-        for rid in ids_to_check:
-            valid, _ = results.get(rid, (False, ""))
-            if valid:
-                validated.append(rid)
-                consecutive_invalid = 0
+            if is_valid:
+                validated.append(req_id)
+                self._validated_urls[req_id] = canonical
+                consecutive_invalid = 0  # gap bridged — reset counter
+                delay = random.uniform(*_DELAY_NORMAL)
             else:
                 consecutive_invalid += 1
                 if consecutive_invalid >= _MAX_CONSECUTIVE_INVALID:
-                    break
+                    break  # True frontier reached — stop probing
+                # Smart throttle: slow down after many misses to look natural
+                if consecutive_invalid > _THROTTLE_MISS_THRESHOLD:
+                    delay = random.uniform(*_DELAY_THROTTLE)
+                else:
+                    delay = random.uniform(*_DELAY_NORMAL)
+
+            time.sleep(delay)
 
         return validated
 

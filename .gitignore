@@ -32,3 +32,6 @@ desktop.ini
 # Environment
 .env
 .env.local
+
+# Project Documentation
+PROJECT_DOCUMENTATION.md

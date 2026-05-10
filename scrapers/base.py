@@ -21,6 +21,21 @@ class BaseScraper(ABC):
         """Safely query a CSS selector and return the element."""
         return parent.select_one(selector) if parent else None
 
+    def clean_description(self, text: str) -> str:
+        """Clean description text by normalizing whitespace safely."""
+        if not text:
+            return ""
+        import re
+        # Remove zero-width and hidden characters
+        text = re.sub(r'[\u200b\u200c\u200d\u200e\u200f\ufeff\xad]', '', text)
+        # Normalize carriage returns
+        text = text.replace('\r\n', '\n').replace('\r', '\n')
+        # Replace multiple horizontal spaces/tabs with single space
+        text = re.sub(r'[^\S\n]+', ' ', text)
+        # Collapse 3+ consecutive newlines into 2
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        return text.strip()
+
     def _budget_selectors(self):
         """Override to provide platform-specific budget CSS selectors."""
         return []

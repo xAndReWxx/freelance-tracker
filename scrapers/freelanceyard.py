@@ -66,17 +66,15 @@ class FreelanceYardScraper(BaseScraper):
                 return desc, budget
             response = session.get(project.link, headers=HEADERS, timeout=10)
             soup = BeautifulSoup(response.text, "html.parser")
-            desc_el = soup.select_one("div.job-description, div.content, article, div.prose")
+            # Specific selector requested for FreelanceYard project description
+            desc_el = soup.select_one("div#job-details div.mb-4.break-words.text-muted")
             if desc_el:
-                desc = desc_el.get_text(" ", strip=True)
+                desc = self.clean_description(desc_el.get_text(" ", strip=True))
             else:
-                paragraphs = soup.select("p")
-                text = " ".join([
-                    p.get_text(" ", strip=True) for p in paragraphs
-                    if len(p.get_text(strip=True)) > 20
-                ])
-                if text:
-                    desc = text
+                # Safe fallback if layout changes slightly
+                desc_fallback = soup.select_one("div.job-description, div.content, article")
+                if desc_fallback:
+                    desc = self.clean_description(desc_fallback.get_text(" ", strip=True))
             if not budget:
                 budget = self._extract_budget(soup)
         except Exception as e:
