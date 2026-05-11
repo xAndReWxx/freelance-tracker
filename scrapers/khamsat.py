@@ -62,51 +62,48 @@ class KhamsatScraper(BaseScraper):
         return sorted(self._seen_ids)[-200:]
 
     async def establish_baseline(self, session) -> int:
-        """Establish the high-water mark for Khamsat request IDs.
-
-        Args:
-            session: Legacy parameter (ignored — uses internal httpx session).
-        """
-        listing_data = await self._fetch_listing()
-        if listing_data:
-            listing_max = max(listing_data.keys())
-            if listing_max > self._last_id:
-                self._last_id = listing_max
-            self._seen_ids.update(listing_data.keys())
-            print(f"[Khamsat] Listing baseline: #{listing_max}")
-
+        """Establish the high-water mark via direct forward probing only. No listing cache pollution."""
         if self._last_id == 0:
-            return 0
+            # Fallback only for fresh install
+            try:
+                html = (await khamsat_session.get(_LISTING_URL, timeout=10)).text
+                soup = BeautifulSoup(html, "html.parser")
+                links = soup.select("h3.details-head a")
+                ids = []
+                for link in links:
+                    href = link.get("href", "")
+                    match = re.search(r"/community/requests/(\d+)", href)
+                    if match:
+                        ids.append(int(match.group(1)))
+                if ids:
+                    self._last_id = max(ids)
+            except Exception:
+                pass
+            return self._last_id
 
+        print(f"[Khamsat] Establishing baseline from #{self._last_id} via forward probing...")
         max_batches = 5
         for _ in range(max_batches):
             start_id = self._last_id + 1
-            # For baseline, we use a fixed range
             end_id = start_id + _SCAN_RANGE_DEFAULT
             
+            any_found = False
             async for p in self._probe_projects_stream(start_id, end_id):
                 req_id = getattr(p, 'id', 0)
                 if req_id > self._last_id:
                     self._last_id = req_id
                 self._seen_ids.add(req_id)
+                any_found = True
+            
+            if not any_found:
+                break
 
         print(f"[Khamsat] Baseline established at #{self._last_id}")
         return self._last_id
 
     async def scrape(self, session):
-        """Scrape for new Khamsat community requests with streaming async generator.
-
-        Args:
-            session: Legacy parameter (ignored — uses internal httpx session).
-        Yields:
-            Project: Detected and extracted projects one by one.
-        """
+        """Scrape for new Khamsat community requests with streaming async generator."""
         if self._last_id == 0:
-            # For seeding, we still return a list to maintain compatibility if needed, 
-            # but we can also yield from it.
-            listing_projects = await self._seed_from_listing()
-            for p in listing_projects:
-                yield p
             return
 
         # Adaptive Scan Range (Fix 7)
@@ -122,13 +119,17 @@ class KhamsatScraper(BaseScraper):
         # Ultra-fast one-pass detection + extraction with streaming
         async for project in self._probe_projects_stream(start_id, end_id):
             req_id = getattr(project, 'id', None)
+            
+            # Temporary Debug Log
+            print(f"[DEBUG Khamsat] Incoming ID: {req_id} | Current last_id: {self._last_id} | Already seen: {req_id in self._seen_ids} | Seen cache size: {len(self._seen_ids)}")
+            
             if req_id and req_id not in self._seen_ids:
                 self._activity_counter += 1
                 self._seen_ids.add(req_id)
                 if req_id > self._last_id:
                     self._last_id = req_id
                 
-                # Add detection timestamp for Fix 10
+                # Add detection timestamp for Latency metrics
                 project.detected_at = time.time()
                 yield project
 
@@ -288,94 +289,6 @@ class KhamsatScraper(BaseScraper):
                         p.id = req_id
                         return p
             return None
-
-    async def _fetch_listing(self) -> dict:
-        """Fetch the listing page using authenticated httpx session."""
-        try:
-            resp = await khamsat_session.get(
-                _LISTING_URL, timeout=_GET_TIMEOUT
-            )
-            if resp is None or resp.status_code != 200:
-                return {}
-            html = resp.text
-        except Exception:
-            return {}
-
-        soup = BeautifulSoup(html, "html.parser")
-        rows = soup.select("tr.forum_post")
-
-        data = {}
-        for row in rows:
-            try:
-                project, req_id = self._parse_row(row)
-                if project and req_id is not None:
-                    data[req_id] = project
-            except Exception:
-                pass
-
-        return data
-
-    def _build_minimal_project(self, req_id: int):
-        canonical = self._validated_urls.get(req_id, "")
-        url = canonical or f"{_BASE_URL}/community/requests/{req_id}"
-        title = self._title_from_slug(canonical, req_id)
-        return Project(
-            site=self.SITE_NAME,
-            title=title,
-            link=url,
-            description="⏱ جاري استخراج التفاصيل...",
-            budget=""
-        )
-
-    def _parse_row(self, row):
-        link_el = row.select_one("h3.details-head a")
-        if not link_el:
-            return None, None
-
-        href = link_el.get("href", "")
-        title = link_el.get_text(strip=True)
-
-        if not href or not title:
-            return None, None
-
-        req_id = self._extract_id_from_href(href)
-        if req_id is None:
-            return None, None
-
-        full_url = f"{_BASE_URL}{href}" if href.startswith("/") else href
-
-        # Time extraction
-        relative_time = ""
-        spans = row.find_all("span")
-        for span in spans:
-            text = span.get_text(strip=True)
-            if text.startswith("منذ") and "آخر تفاعل" not in text:
-                relative_time = text
-                break
-
-        desc_parts = []
-        if relative_time:
-            desc_parts.append(f"⏱ {relative_time}")
-
-        user_el = row.select_one("a.user-name, a.author, span.user-name")
-        if user_el:
-            username = user_el.get_text(strip=True)
-            desc_parts.append(f"👤 {username}")
-
-        description = "\n".join(desc_parts) if desc_parts else "⏱ طلب جديد"
-
-        return Project(
-            site=self.SITE_NAME,
-            title=title,
-            link=full_url,
-            description=description,
-            budget=""
-        ), req_id
-
-    @staticmethod
-    def _extract_id_from_href(href: str):
-        match = re.search(r"/community/requests/(\d+)", href)
-        return int(match.group(1)) if match else None
 
     @staticmethod
     def _title_from_slug(canonical_url: str, req_id: int) -> str:
