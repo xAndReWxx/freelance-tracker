@@ -6,6 +6,9 @@ import os
 import sys
 
 
+from core.logger import get_logger, perf_monitor
+logger = get_logger(__name__, "system.log")
+
 class StartupManager:
     """Manages Windows startup shortcut safely."""
 
@@ -54,13 +57,13 @@ class StartupManager:
             shortcut.Save()
 
             if os.path.exists(startup_path):
-                print(f"Startup shortcut created: {startup_path}")
+                logger.info(f"Startup shortcut created: {startup_path}")
                 return True
             else:
-                print(f"Startup shortcut NOT found after save: {startup_path}")
+                logger.info(f"Startup shortcut NOT found after save: {startup_path}")
                 return False
         except Exception as e:
-            print(f"Startup enable error: {e}")
+            logger.error(f"Startup enable error: {e}")
             return False
 
     def disable(self):
@@ -71,7 +74,7 @@ class StartupManager:
                 os.remove(startup_path)
             return True
         except Exception as e:
-            print(f"Startup disable error: {e}")
+            logger.error(f"Startup disable error: {e}")
             return False
 
     def sync(self, enabled):

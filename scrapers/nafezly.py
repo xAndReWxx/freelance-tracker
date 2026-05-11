@@ -7,6 +7,9 @@ from models import Project
 from config import HEADERS
 
 
+from core.logger import get_logger, perf_monitor
+logger = get_logger(__name__, "system.log")
+
 class NafezlyScraper(BaseScraper):
     SITE_NAME = "Nafezly"
     URL = "https://nafezly.com/projects"
@@ -35,7 +38,7 @@ class NafezlyScraper(BaseScraper):
                     budget=self._extract_budget(card)
                 ))
             except Exception as e:
-                print(f"Nafezly Parse Error: {e}")
+                logger.error(f"Nafezly Parse Error: {e}")
         return projects
 
     def fetch_full_description(self, project, session):
@@ -51,5 +54,5 @@ class NafezlyScraper(BaseScraper):
             if not budget:
                 budget = self._extract_budget(soup)
         except Exception as e:
-            print(f"Fetch details error (Nafezly): {e}")
+            logger.error(f"Fetch details error (Nafezly): {e}")
         return desc, budget

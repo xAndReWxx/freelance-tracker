@@ -8,6 +8,9 @@ import threading
 from config import get_settings_path
 
 
+from core.logger import get_logger, perf_monitor
+logger = get_logger(__name__, "system.log")
+
 class SettingsManager:
     """Manages application settings with thread-safe access."""
 
@@ -34,7 +37,7 @@ class SettingsManager:
                 try:
                     os.rename(legacy_path, path)
                 except Exception as e:
-                    print("Could not rename legacy filters.json:", e)
+                    logger.info("Could not rename legacy filters.json:", e)
 
             if os.path.exists(path):
                 with open(path, "r", encoding="utf-8") as f:
@@ -48,7 +51,7 @@ class SettingsManager:
                     self.last_khamsat_id = data.get("last_khamsat_id", 0)
                     self.khamsat_recent_seen = data.get("khamsat_recent_seen", [])
         except Exception as e:
-            print("Load settings error:", e)
+            logger.error("Load settings error:", e)
 
     def save(self):
         """Save settings to disk. Thread-safe via lock."""
@@ -69,7 +72,7 @@ class SettingsManager:
                         "khamsat_recent_seen": seen_capped
                     }, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print("Save settings error:", e)
+            logger.error("Save settings error:", e)
 
     def add_keyword(self, kw):
         """Add a keyword filter. Returns True if added."""

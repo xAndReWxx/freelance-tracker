@@ -14,6 +14,9 @@ from bs4 import BeautifulSoup
 from scrapers.base import BaseScraper
 from scrapers.session_manager import khamsat_session
 from models import Project
+from core.logger import get_logger, perf_monitor, LatencyTracker
+
+logger = get_logger("Khamsat", "scrapers.log")
 
 _LISTING_URL = "https://khamsat.com/community/requests"
 _BASE_URL = "https://khamsat.com"
@@ -81,7 +84,7 @@ class KhamsatScraper(BaseScraper):
                 pass
             return self._last_id
 
-        print(f"[Khamsat] Establishing baseline from #{self._last_id} via forward probing...")
+        logger.info(f"Establishing baseline from #{self._last_id} via forward probing...")
         max_batches = 5
         for _ in range(max_batches):
             start_id = self._last_id + 1
@@ -98,7 +101,7 @@ class KhamsatScraper(BaseScraper):
             if not any_found:
                 break
 
-        print(f"[Khamsat] Baseline established at #{self._last_id}")
+        logger.info(f"Baseline established at #{self._last_id}")
         return self._last_id
 
     async def scrape(self, session):
@@ -121,7 +124,7 @@ class KhamsatScraper(BaseScraper):
             req_id = getattr(project, 'id', None)
             
             # Temporary Debug Log
-            print(f"[DEBUG Khamsat] Incoming ID: {req_id} | Current last_id: {self._last_id} | Already seen: {req_id in self._seen_ids} | Seen cache size: {len(self._seen_ids)}")
+            logger.debug(f"[PROBE] Incoming ID: {req_id} | Current last_id: {self._last_id} | Already seen: {req_id in self._seen_ids} | Seen cache size: {len(self._seen_ids)}")
             
             if req_id and req_id not in self._seen_ids:
                 self._activity_counter += 1
@@ -204,7 +207,7 @@ class KhamsatScraper(BaseScraper):
 
             return clean_text
         except Exception as e:
-            logger.debug(f"[KhamsatExtraction] Error: {e}")
+            logger.error(f"[KhamsatExtraction] Error: {e}")
             return None
 
     async def _probe_projects_stream(self, start_id: int, end_id: int):
@@ -263,12 +266,24 @@ class KhamsatScraper(BaseScraper):
         await asyncio.sleep(random.uniform(0.01, 0.1))
 
         async with self._semaphore:
-            url = f"{_BASE_URL}/community/requests/{req_id}"
-            
-            # Authenticated GET (Fix 9: Timeout resilience handled by session manager)
-            resp = await khamsat_session.get(url, timeout=_HEAD_TIMEOUT)
+            with LatencyTracker(req_id, "HTTP_Probe", logger):
+                url = f"{_BASE_URL}/community/requests/{req_id}"
+                try:
+                    perf_monitor.add_request()
+                    # Authenticated GET (Fix 9: Timeout resilience handled by session manager)
+                    resp = await khamsat_session.get(url, timeout=_HEAD_TIMEOUT)
+                except asyncio.TimeoutError:
+                    logger.warning(f"[PROBE] Timeout for ID={req_id}")
+                    perf_monitor.add_error()
+                    return None
+                except Exception as e:
+                    logger.error(f"[PROBE] Network error ID={req_id}: {e}")
+                    perf_monitor.add_error()
+                    return None
 
             if resp and resp.status_code == 200:
+                if "لدينا ما تبحث عنه" in resp.text or "غير موجودة" in resp.text:
+                    return None
                 final_url = str(resp.url)
                 path = self._urlparse(final_url).path
                 
@@ -279,6 +294,8 @@ class KhamsatScraper(BaseScraper):
                     title = self._title_from_slug(final_url, req_id)
                     
                     if description:
+                        perf_monitor.add_detection()
+                        logger.info(f"[DETECTED] ID={req_id} ExtractTime=Success")
                         p = Project(
                             site=self.SITE_NAME,
                             title=title,
@@ -288,6 +305,8 @@ class KhamsatScraper(BaseScraper):
                         )
                         p.id = req_id
                         return p
+                    else:
+                        logger.debug(f"[FILTERED] ID={req_id} Reason='keyword_mismatch_or_empty'")
             return None
 
     @staticmethod

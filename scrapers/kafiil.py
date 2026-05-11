@@ -8,6 +8,9 @@ from models import Project
 from config import HEADERS
 
 
+from core.logger import get_logger, perf_monitor
+logger = get_logger(__name__, "system.log")
+
 class KafiilScraper(BaseScraper):
     SITE_NAME = "Kafiil"
     URL = "https://kafiil.com/projects"
@@ -55,7 +58,7 @@ class KafiilScraper(BaseScraper):
                     budget=budget
                 ))
             except Exception as e:
-                print(f"Kafiil Parse Error: {e}")
+                logger.error(f"Kafiil Parse Error: {e}")
         return projects
 
     def fetch_full_description(self, project, session):
@@ -84,5 +87,5 @@ class KafiilScraper(BaseScraper):
             if not budget:
                 budget = self._extract_budget(soup)
         except Exception as e:
-            print(f"Fetch details error (Kafiil): {e}")
+            logger.error(f"Fetch details error (Kafiil): {e}")
         return desc, budget

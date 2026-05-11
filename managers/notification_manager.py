@@ -20,28 +20,35 @@ class NotificationManager:
 
     def _send(self, project):
         """Internal: build and dispatch the toast notification."""
+        from core.logger import get_logger, LatencyTracker
+        logger = get_logger("Desktop", "desktop.log")
+        
         try:
-            site = project.site
-            title = project.title
-            desc = project.description
-            link = project.link
-            budget = project.budget.strip() if project.budget else ""
+            req_id = getattr(project, 'id', None) or project.link
+            with LatencyTracker(req_id, "Desktop_Toast", logger):
+                site = project.site
+                title = project.title
+                desc = project.description
+                link = project.link
+                budget = project.budget.strip() if project.budget else ""
 
-            icon = PLATFORMS_CONFIG.get(site, {}).get("icon")
+                icon = PLATFORMS_CONFIG.get(site, {}).get("icon")
 
-            if not budget:
-                budget = "Budget not specified"
-            elif not any(x in budget.lower() for x in ["budget", "ميزانية", "سعر", "price"]):
-                budget = f"Budget: {budget}"
+                if not budget:
+                    budget = "Budget not specified"
+                elif not any(x in budget.lower() for x in ["budget", "ميزانية", "سعر", "price"]):
+                    budget = f"Budget: {budget}"
 
-            snippet = desc[:140].strip() if desc else "No description"
+                snippet = desc[:140].strip() if desc else "No description"
 
-            toast(
-                f"[{site}] {title}",
-                f"{budget}\n{snippet}",
-                icon=icon,
-                on_click=link,
-                app_id="Freelance Tracker"
-            )
+                toast(
+                    f"[{site}] {title}",
+                    f"{budget}\n{snippet}",
+                    icon=icon,
+                    on_click=link,
+                    audio="ms-winsoundevent:Notification.Default",
+                    app_id="Freelance Tracker"
+                )
+                logger.info(f"[TOAST] Sent for ProjectID={req_id}")
         except Exception as e:
-            print("Notification Error:", e)
+            logger.error(f"[TOAST] Failed for ProjectID={req_id}: {e}")

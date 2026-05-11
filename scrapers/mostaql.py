@@ -7,6 +7,9 @@ from models import Project
 from config import HEADERS
 
 
+from core.logger import get_logger, perf_monitor
+logger = get_logger(__name__, "system.log")
+
 class MostaqlScraper(BaseScraper):
     SITE_NAME = "Mostaql"
     URL = "https://mostaql.com/projects"
@@ -35,7 +38,7 @@ class MostaqlScraper(BaseScraper):
                     budget=self._extract_budget(row)
                 ))
             except Exception as e:
-                print(f"Mostaql Parse Error: {e}")
+                logger.error(f"Mostaql Parse Error: {e}")
         return projects
 
     def fetch_full_description(self, project, session):
@@ -51,5 +54,5 @@ class MostaqlScraper(BaseScraper):
             if not budget:
                 budget = self._extract_budget(soup)
         except Exception as e:
-            print(f"Fetch details error (Mostaql): {e}")
+            logger.error(f"Fetch details error (Mostaql): {e}")
         return desc, budget

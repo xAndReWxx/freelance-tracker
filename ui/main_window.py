@@ -263,9 +263,6 @@ class FreelanceTrackerApp(ctk.CTk):
 
         self._build_filter_panel(main)
 
-        self.log_bar = ctk.CTkLabel(main, text="  Ready", font=ctk.CTkFont(family="Consolas", size=11), text_color=COLORS["text_muted"], fg_color=COLORS["bg_sidebar"], anchor="w", height=28, corner_radius=0)
-        self.log_bar.grid(row=3, column=0, sticky="ew")
-
     # ==========================================
     # FILTER PANEL BUILDER
     # ==========================================
@@ -357,8 +354,9 @@ class FreelanceTrackerApp(ctk.CTk):
         return val
 
     def _update_log(self, text):
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.log_bar.configure(text=f"  [{timestamp}] {text}")
+        from core.logger import get_logger
+        logger = get_logger("DesktopUI", "ui.log")
+        logger.info(text)
 
     def _update_stats(self):
         self.stat_new.configure(text=str(self.session_new))
@@ -806,6 +804,17 @@ class FreelanceTrackerApp(ctk.CTk):
                         )
                     self.workers.append(t)
                     t.start()
+            
+            # Start performance monitor thread
+            def _perf_loop():
+                from core.logger import perf_monitor
+                while self.is_monitoring:
+                    perf_monitor.log_metrics()
+                    time.sleep(60)
+            
+            p_thread = threading.Thread(target=_perf_loop, daemon=True)
+            self.workers.append(p_thread)
+            p_thread.start()
 
         else:
             self.is_monitoring = False

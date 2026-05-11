@@ -7,6 +7,9 @@ from models import Project
 from config import HEADERS
 
 
+from core.logger import get_logger, perf_monitor
+logger = get_logger(__name__, "system.log")
+
 class FreelanceYardScraper(BaseScraper):
     SITE_NAME = "FreelanceYard"
     URL = "https://freelanceyard.com/en/jobs"
@@ -56,7 +59,7 @@ class FreelanceYardScraper(BaseScraper):
                     budget=budget
                 ))
             except Exception as e:
-                print(f"FreelanceYard Parse Error: {e}")
+                logger.error(f"FreelanceYard Parse Error: {e}")
         return projects
 
     def fetch_full_description(self, project, session):
@@ -78,5 +81,5 @@ class FreelanceYardScraper(BaseScraper):
             if not budget:
                 budget = self._extract_budget(soup)
         except Exception as e:
-            print(f"Fetch details error (FreelanceYard): {e}")
+            logger.error(f"Fetch details error (FreelanceYard): {e}")
         return desc, budget

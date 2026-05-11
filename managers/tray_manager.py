@@ -9,6 +9,9 @@ from PIL import Image
 from config import COLORS, APP_ICON
 
 
+from core.logger import get_logger, perf_monitor
+logger = get_logger(__name__, "system.log")
+
 class TrayManager:
     """Manages the system tray icon and its menu."""
 
@@ -23,7 +26,7 @@ class TrayManager:
             if os.path.exists(APP_ICON):
                 return Image.open(APP_ICON)
         except Exception as e:
-            print(f"Tray icon error: {e}")
+            logger.error(f"Tray icon error: {e}")
         return Image.new("RGB", (64, 64), COLORS["accent"])
 
     def hide(self):
