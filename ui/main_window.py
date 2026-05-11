@@ -664,119 +664,107 @@ class FreelanceTrackerApp(ctk.CTk):
 
     def _khamsat_worker(self, config):
         """
-        Specialized worker for Khamsat ID-based crawling.
-
-        Startup:
-        - Calls establish_baseline() ONCE to discover the true frontier.
-          This scans forward (listing page + HEAD probes) silently —
-          no UI cards, no notifications, no sounds.
-        - Persists the frontier immediately.
-
-        Main loop:
-        - Only IDs beyond the frontier trigger UI/notifications.
-        - High-water mark + seen cache saved on every detection.
+        Specialized worker for Khamsat async streaming crawling.
         """
         from scrapers.khamsat import KhamsatScraper
+        from scrapers.session_manager import khamsat_session
+        import asyncio
 
-        session = requests.Session()
-        session.headers.update(HEADERS)
-        interval = config.get("interval", 20)
+        async def _async_khamsat_worker():
+            interval = config.get("interval", 10)
+            scraper = KhamsatScraper()
+            scraper.set_last_id(self.settings.last_khamsat_id)
 
-        scraper = KhamsatScraper()
-        scraper.set_last_id(self.settings.last_khamsat_id)
+            if self.settings.khamsat_recent_seen:
+                scraper.load_seen_cache(self.settings.khamsat_recent_seen)
 
-        # ── Restore persisted seen-cache ─────────────────────────────
-        if self.settings.khamsat_recent_seen:
-            scraper.load_seen_cache(self.settings.khamsat_recent_seen)
+            self.after(0, lambda: self._update_log(
+                f"[Khamsat] Initializing browserless session..."
+            ))
+            await khamsat_session.initialize()
 
-        self.after(0, lambda: self._update_log(
-            f"[Khamsat] Establishing baseline from #{self.settings.last_khamsat_id}..."
-        ))
-
-        # ── Silent baseline — find the true frontier ─────────────────
-        # This scans forward (listing page + batched HEAD probes) to
-        # discover the latest valid request ID.  Returns nothing to UI.
-        try:
-            baseline_id = scraper.establish_baseline(session)
-        except Exception as e:
-            baseline_id = scraper.get_last_id()
-            self.after(0, lambda err=e: self._update_log(
-                f"[Khamsat] Baseline error: {err}"
+            self.after(0, lambda: self._update_log(
+                f"[Khamsat] Establishing baseline from #{self.settings.last_khamsat_id}..."
             ))
 
-        # Persist the baseline immediately
-        if baseline_id > self.settings.last_khamsat_id:
-            self.settings.last_khamsat_id = baseline_id
-        self.settings.khamsat_recent_seen = scraper.get_seen_cache()
-        self.settings.save()
+            try:
+                baseline_id = await scraper.establish_baseline(None)
+            except Exception as e:
+                baseline_id = scraper.get_last_id()
+                self.after(0, lambda err=e: self._update_log(f"[Khamsat] Baseline error: {err}"))
 
-        self.after(0, lambda cid=baseline_id: self._update_log(
-            f"[Khamsat] Baseline at #{cid} — monitoring for new requests"
-        ))
+            if baseline_id > self.settings.last_khamsat_id:
+                self.settings.last_khamsat_id = baseline_id
+            self.settings.khamsat_recent_seen = scraper.get_seen_cache()
+            self.settings.save()
 
-        # ── Main monitoring loop ─────────────────────────────────────
-        # Everything from here is genuinely new (post-baseline).
-        try:
-            while self.is_monitoring:
-                for _ in range(interval):
+            self.after(0, lambda cid=baseline_id: self._update_log(
+                f"[Khamsat] Baseline at #{cid} — monitoring for new requests"
+            ))
+
+            try:
+                while self.is_monitoring:
+                    for _ in range(interval):
+                        if not self.is_monitoring:
+                            break
+                        await asyncio.sleep(1)
+
                     if not self.is_monitoring:
                         break
-                    time.sleep(1)
 
-                if not self.is_monitoring:
-                    break
+                    try:
+                        found = 0
+                        async for project in scraper.scrape(None):
+                            if not self.is_monitoring:
+                                break
+                                
+                            unique_id = project.link
+                            if not unique_id:
+                                continue
 
-                try:
-                    projects = scraper.scrape(session)
-                    current_id = scraper.get_last_id()
+                            is_new = False
+                            with self.seen_lock:
+                                if unique_id not in self.seen_projects:
+                                    self.seen_projects[unique_id] = True
+                                    is_new = True
+                                    if len(self.seen_projects) > 3000:
+                                        first_key = next(iter(self.seen_projects))
+                                        del self.seen_projects[first_key]
 
-                    # ── Persist state immediately on detection ────────
-                    if current_id > self.settings.last_khamsat_id or projects:
-                        self.settings.last_khamsat_id = current_id
-                        self.settings.khamsat_recent_seen = scraper.get_seen_cache()
-                        self.settings.save()
+                            if is_new:
+                                found += 1
+                                current_id = getattr(project, 'id', scraper.get_last_id())
+                                if current_id > self.settings.last_khamsat_id:
+                                    self.settings.last_khamsat_id = current_id
+                                self.settings.khamsat_recent_seen = scraper.get_seen_cache()
+                                self.settings.save()
 
-                    found = len(projects)
-                    self.after(0, lambda f=found, cid=current_id: self._update_log(
-                        f"Checked Khamsat ✓ (ID→{cid}, found {f})"
-                    ))
+                                project.detected_at = datetime.now()
 
-                    for project in projects:
-                        unique_id = project.link
-                        if not unique_id:
-                            continue
+                                if self.settings.matches_filters(project):
+                                    def _on_new_project(p=project):
+                                        self.session_new += 1
+                                        self._add_project_card(p)
+                                    self.after(0, _on_new_project)
+                                    self.notif_mgr.send(project)
+                                    self.after(0, lambda p=project: self._update_log(f"🆕 Khamsat: {p.title[:50]}"))
+                                else:
+                                    self.after(0, lambda p=project: self._update_log(f"Filtered out: {p.title[:40]}"))
 
-                        is_new = False
-                        with self.seen_lock:
-                            if unique_id not in self.seen_projects:
-                                self.seen_projects[unique_id] = True
-                                is_new = True
+                        current_id = scraper.get_last_id()
+                        self.after(0, lambda f=found, cid=current_id: self._update_log(
+                            f"Checked Khamsat ✓ (ID→{cid}, found {f})"
+                        ))
 
-                                if len(self.seen_projects) > 3000:
-                                    first_key = next(iter(self.seen_projects))
-                                    del self.seen_projects[first_key]
+                    except Exception as e:
+                        self.after(0, lambda err=e: self._update_log(f"Khamsat error: {err}"))
+            finally:
+                await khamsat_session.shutdown()
 
-                        if is_new:
-                            project.detected_at = datetime.now()
-
-                            if self.settings.matches_filters(project):
-                                def _on_new_project(p=project):
-                                    self.session_new += 1
-                                    self._add_project_card(p)
-                                self.after(0, _on_new_project)
-                                self.notif_mgr.send(project)
-                                self.after(0, lambda p=project: self._update_log(
-                                    f"🆕 Khamsat: {p.title[:50]}"
-                                ))
-                            else:
-                                self.after(0, lambda p=project: self._update_log(
-                                    f"Filtered out: {p.title[:40]}"
-                                ))
-
-                except Exception as e:
-                    self.after(0, lambda err=e: self._update_log(f"Khamsat error: {err}"))
-        finally:
-            session.close()
+        try:
+            asyncio.run(_async_khamsat_worker())
+        except Exception as e:
+            self.after(0, lambda err=e: self._update_log(f"Khamsat worker error: {err}"))
 
     def _toggle_monitoring(self):
         if not self.is_monitoring:
@@ -823,12 +811,7 @@ class FreelanceTrackerApp(ctk.CTk):
     def _on_close(self):
         self.is_monitoring = False
         self.tray_mgr.stop()
-        # Shutdown persistent Playwright browser
-        try:
-            from scrapers.browser_manager import browser_mgr
-            browser_mgr.shutdown()
-        except Exception:
-            pass
+
         self.after(350, self.destroy)
 
     def _start_from_tray(self):
