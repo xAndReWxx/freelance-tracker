@@ -704,14 +704,6 @@ class FreelanceTrackerApp(ctk.CTk):
 
             try:
                 while self.is_monitoring:
-                    for _ in range(interval):
-                        if not self.is_monitoring:
-                            break
-                        await asyncio.sleep(1)
-
-                    if not self.is_monitoring:
-                        break
-
                     try:
                         found = 0
                         async for project in scraper.scrape(None):
@@ -739,15 +731,26 @@ class FreelanceTrackerApp(ctk.CTk):
                                 self.settings.khamsat_recent_seen = scraper.get_seen_cache()
                                 self.settings.save()
 
+                                # Preserve the float timestamp from KhamsatScraper for latency tracking
+                                original_detection_time = getattr(project, 'detected_at', time.time())
+                                
+                                # Convert to datetime for UI card, but keep original for metrics
                                 project.detected_at = datetime.now()
 
                                 if self.settings.matches_filters(project):
+                                    start_dispatch = time.time()
                                     def _on_new_project(p=project):
                                         self.session_new += 1
                                         self._add_project_card(p)
                                     self.after(0, _on_new_project)
                                     self.notif_mgr.send(project)
-                                    self.after(0, lambda p=project: self._update_log(f"🆕 Khamsat: {p.title[:50]}"))
+                                    
+                                    total_latency = time.time() - original_detection_time
+                                    dispatch_latency = time.time() - start_dispatch
+                                    
+                                    self.after(0, lambda p=project, tl=total_latency, dl=dispatch_latency: self._update_log(
+                                        f"🆕 Khamsat: {p.title[:30]} | Latency: {tl:.2f}s (Dispatch: {dl:.2f}s)"
+                                    ))
                                 else:
                                     self.after(0, lambda p=project: self._update_log(f"Filtered out: {p.title[:40]}"))
 
@@ -758,6 +761,11 @@ class FreelanceTrackerApp(ctk.CTk):
 
                     except Exception as e:
                         self.after(0, lambda err=e: self._update_log(f"Khamsat error: {err}"))
+                        
+                    for _ in range(interval):
+                        if not self.is_monitoring:
+                            break
+                        await asyncio.sleep(1)
             finally:
                 await khamsat_session.shutdown()
 

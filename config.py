@@ -115,7 +115,7 @@ PLATFORMS_CONFIG = {
         "hover": "#d35400",
         "icon": KHAMSAT_ICON,
         "default": True,
-        "interval": 20
+        "interval": 10
     }
 }
 
